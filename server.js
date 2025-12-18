@@ -1,71 +1,76 @@
 /**
  * =====================================================
  * server.js
- * =====================================================
- * Backend mínimo para:
- * - Servir frontend /public
- * - POST /session (Realtime)
- * - GET /health (Railway)
+ * BACKEND MÍNIMO Y ESTABLE DEL ASISTENTE
  * =====================================================
  */
 
 import express from "express";
 import dotenv from "dotenv";
+import fetch from "node-fetch";
 import path from "path";
 import { fileURLToPath } from "url";
-import fetch from "node-fetch";
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
-// __dirname en ES Modules
+// === FIX ES MODULES (CRÍTICO) ===
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const publicPath = path.join(__dirname, "public");
 
+// === MIDDLEWARES ===
 app.use(express.json());
+app.use(express.static(publicPath));
 
-// 1) Servir estáticos
-const publicDir = path.join(__dirname, "public");
-app.use(express.static(publicDir));
-
-// 2) Root -> index.html (forzado)
+// === ROOT (HTML) ===
 app.get("/", (req, res) => {
-  res.sendFile(path.join(publicDir, "index.html"));
+  res.sendFile(path.join(publicPath, "index.html"));
 });
 
-// 3) Health check
+// === HEALTH CHECK (Railway) ===
 app.get("/health", (req, res) => {
   res.status(200).send("OK");
 });
 
-// 4) Crear sesión Realtime
+// === REALTIME SESSION ===
 app.post("/session", async (req, res) => {
   try {
     const { model, voice, instructions } = req.body;
 
     if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: "OPENAI_API_KEY no configurada" });
+      return res.status(500).json({
+        error: "OPENAI_API_KEY no configurada",
+      });
     }
 
-    const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ model, voice, instructions }),
-    });
+    const response = await fetch(
+      "https://api.openai.com/v1/realtime/sessions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          voice,
+          instructions,
+        }),
+      }
+    );
 
     const data = await response.json();
-    return res.status(response.ok ? 200 : response.status).json(data);
+    res.json(data);
   } catch (error) {
     console.error("Error creando sesión:", error);
-    return res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message });
   }
 });
 
+// === START SERVER ===
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server listening on port ${PORT}`);
 });
