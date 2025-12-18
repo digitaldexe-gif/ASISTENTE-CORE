@@ -74,9 +74,25 @@ async function startCall() {
     log("🎤 Micrófono capturado");
 
     // 4) DataChannel
-    dc = pc.createDataChannel("oai-events");
-    dc.onopen = () => {
-      log("🟢 DataChannel abierto");
+    dataChannel = pc.createDataChannel("oai-events");
+
+dataChannel.onopen = () => {
+  log("🟢 DataChannel abierto");
+
+  // 🔊 FORZAR SALUDO CON AUDIO
+  const greetingEvent = {
+    type: "response.create",
+    response: {
+      modalities: ["audio"],
+      instructions: systemPrompt,
+      output_audio_format: "pcm16",
+      max_output_tokens: 120
+    }
+  };
+
+  dataChannel.send(JSON.stringify(greetingEvent));
+  log("📢 Saludo enviado al asistente (audio)");
+};
 
       // Construimos prompt + saludo
       const greeting = getGreetingByTime();
