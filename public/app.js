@@ -44,6 +44,21 @@ async function startCall() {
 
     log("📞 Llamar pulsado");
 
+    // ================================
+// 🔊 TEST TTS (aislar problema audio)
+// ================================
+const greeting = getGreetingByTime();
+const text =
+  `${greeting}, ${VOICE_CONFIG.clinicName}, le atiende ${VOICE_CONFIG.assistantName}.`;
+
+await playTTS(text);
+
+// ⛔️ Paramos aquí SOLO para la prueba
+statusEl.textContent = "TTS test";
+return;
+
+
+
     pc = new RTCPeerConnection();
 
     // Audio remoto
@@ -144,3 +159,36 @@ function stopCall() {
 
 startBtn.onclick = startCall;
 stopBtn.onclick = stopCall;
+
+
+
+
+// AJUSTE AUDIO TTS
+
+
+async function playTTS(text) {
+  log("🔊 Solicitando TTS…");
+
+  try {
+    const resp = await fetch("/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!resp.ok) {
+      throw new Error(await resp.text());
+    }
+
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+
+    const audio = new Audio(url);
+    audio.volume = 1;
+
+    await audio.play();
+    log("✅ TTS reproducido correctamente");
+  } catch (err) {
+    log("❌ Error TTS: " + err.message);
+  }
+}

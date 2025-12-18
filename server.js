@@ -82,3 +82,45 @@ app.post(
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server listening on ${PORT}`);
 });
+
+
+
+/**
+ *VERSIÓN AUDIO TTS
+ */
+
+app.post("/tts", express.json(), async (req, res) => {
+  try {
+    const { text } = req.body;
+
+    if (!text) {
+      return res.status(400).send("No text provided");
+    }
+
+    const openaiResp = await fetch("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini-tts",
+        voice: "coral",
+        input: text,
+        format: "mp3",
+      }),
+    });
+
+    if (!openaiResp.ok) {
+      const err = await openaiResp.text();
+      console.error("❌ TTS error:", err);
+      return res.status(500).send(err);
+    }
+
+    res.setHeader("Content-Type", "audio/mpeg");
+    openaiResp.body.pipe(res);
+  } catch (err) {
+    console.error("❌ /tts error:", err);
+    res.status(500).send("TTS failed");
+  }
+});
