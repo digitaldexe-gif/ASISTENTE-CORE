@@ -19,10 +19,10 @@ const stopBtn = document.getElementById("stopBtn");
 const statusEl = document.getElementById("status");
 const logEl = document.getElementById("log");
 
-let pc;
-let dc;
-let localStream;
-let remoteAudio;
+let pc = null;
+let dc = null;
+let localStream = null;
+let remoteAudio = null;
 
 function log(msg) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
@@ -32,9 +32,8 @@ function log(msg) {
 }
 
 function sendEvent(payload) {
-  if (dc && dc.readyState === "open") {
-    dc.send(JSON.stringify(payload));
-  }
+  if (!dc || dc.readyState !== "open") return;
+  dc.send(JSON.stringify(payload));
 }
 
 async function startCall() {
@@ -42,36 +41,40 @@ async function startCall() {
     startBtn.disabled = true;
     stopBtn.disabled = false;
     statusEl.textContent = "Conectando…";
-
     log("📞 Llamar pulsado");
 
-    // ===== 1) RTCPeerConnection =====
+    // 1) PeerConnection
     pc = new RTCPeerConnection();
 
-    // ===== 2) Audio remoto =====
+    pc.onconnectionstatechange = () => {
+      log(`🔁 PC state: ${pc.connectionState}`);
+    };
+
+    // 2) Audio remoto
     remoteAudio = document.createElement("audio");
     remoteAudio.autoplay = true;
     remoteAudio.playsInline = true;
+    remoteAudio.muted = false;
     remoteAudio.volume = 1;
     document.body.appendChild(remoteAudio);
 
     pc.ontrack = async (e) => {
-      log("🔊 Audio remoto recibido");
+      log("🔊 Audio remoto recibido (track)");
       remoteAudio.srcObject = e.streams[0];
       try {
         await remoteAudio.play();
         log("✅ remoteAudio.play() OK");
       } catch (err) {
-        log("⚠️ play() bloqueado: " + err.message);
+        log("⚠️ remoteAudio.play() bloqueado: " + (err?.message || err));
       }
     };
 
-    // ===== 3) Micrófono =====
+    // 3) Micrófono
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
     log("🎤 Micrófono capturado");
 
-    // ===== 4) DataChannel =====
+    // 4) DataChannel
     dc = pc.createDataChannel("oai-events");
 
     dc.onopen = () => {
@@ -80,36 +83,26 @@ async function startCall() {
       const greeting = getGreetingByTime();
       const systemPrompt = VOICE_CONFIG.buildSystemPrompt({ greeting });
 
-      // A) Actualizar sesión con instrucciones
+      // A) Session update: deja TODO explícito (audio + voz + formato)
       sendEvent({
         type: "session.update",
         session: {
-          instructions: systemPrompt
-        }
+          instructions: systemPrompt,
+          modalities: ["audio", "text"],
+          voice: VOICE_CONFIG.voice,
+          output_audio_format: "pcm16",
+        },
       });
 
-      // B) Forzar que el asistente HABLE primero
-      sendEvent({
-        type: "conversation.item.create",
-        item: {
-          type: "message",
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: `Inicia la llamada saludando con: "${greeting}".`
-            }
-          ]
-        }
-      });
-
-      // C) Crear respuesta en AUDIO (CLAVE)
+      // B) Fuerza que hable PRIMERO (sin depender de tu input)
+      // Schema correcto: response.create -> response.output_modalities :contentReference[oaicite:3]{index=3}
       sendEvent({
         type: "response.create",
         response: {
-          output_modalities: ["audio", "text"],
-          max_output_tokens: 150
-        }
+          output_modalities: ["audio"],
+          instructions: `Di exactamente: "${greeting}, ${VOICE_CONFIG.clinicName}, le atiende ${VOICE_CONFIG.assistantName}." Luego CALLAS.`,
+          max_output_tokens: 120,
+        },
       });
 
       log("📢 Saludo solicitado al asistente (AUDIO)");
@@ -118,34 +111,44 @@ async function startCall() {
     dc.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data?.type) {
-          log(`📩 Event: ${data.type}`);
+
+        // Log básico de tipos
+        if (data?.type) log(`📩 Event: ${data.type}`);
+
+        // Log extendido del error (CLAVE para no “adivinar”)
+        if (data?.type === "error") {
+          const msg =
+            data?.error?.message ||
+            data?.message ||
+            JSON.stringify(data, null, 2);
+          log("❌ OpenAI ERROR: " + msg);
         }
-      } catch {}
+      } catch {
+        // ignore
+      }
     };
 
-    // ===== 5) SDP =====
+    // 5) SDP offer -> /session -> answer
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
-    log("📡 Enviando SDP a /session");
+    log("📡 Enviando SDP a /session…");
     const sdpRes = await fetch("/session", {
       method: "POST",
       headers: { "Content-Type": "application/sdp" },
-      body: offer.sdp
+      body: offer.sdp,
     });
 
-    if (!sdpRes.ok) {
-      throw new Error(await sdpRes.text());
-    }
+    if (!sdpRes.ok) throw new Error(await sdpRes.text());
 
     const answerSdp = await sdpRes.text();
     await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
     statusEl.textContent = "En llamada…";
     log("✅ Llamada establecida");
-  } catch (err) {
-    log("❌ Error: " + err.message);
+  } catch (e) {
+    log("❌ Error: " + (e?.message || e));
+    statusEl.textContent = "Error";
     stopCall();
   }
 }
