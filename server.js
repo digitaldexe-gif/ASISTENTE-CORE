@@ -1,10 +1,8 @@
 /**
  * =====================================================
- * server.js (FIX AUDIO REALTIME)
+ * server.js
  * =====================================================
- * Backend para OpenAI Realtime WebRTC
- * - Sirve frontend
- * - Crea sesión Realtime CON AUDIO REAL
+ * Backend estable para OpenAI Realtime WebRTC
  * =====================================================
  */
 
@@ -12,19 +10,17 @@ import express from "express";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
-import fetch from "node-fetch";
-import FormData from "form-data";
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Fix ES Modules
+// ES modules fix
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Static
+// Static frontend
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/utils", express.static(path.join(__dirname, "utils")));
 
@@ -32,11 +28,9 @@ app.use("/utils", express.static(path.join(__dirname, "utils")));
 app.get("/health", (_, res) => res.send("OK"));
 
 /**
- * -------------------------------------
  * POST /session
- * -------------------------------------
  * Recibe SDP (offer)
- * Devuelve SDP (answer) desde OpenAI Realtime
+ * Devuelve SDP (answer)
  */
 app.post(
   "/session",
@@ -44,63 +38,47 @@ app.post(
   async (req, res) => {
     try {
       if (!process.env.OPENAI_API_KEY) {
-        return res.status(500).send("OPENAI_API_KEY no configurada");
+        return res.status(500).send("OPENAI_API_KEY missing");
       }
 
-      const model =
-        process.env.REALTIME_MODEL ||
-        "gpt-4o-mini-realtime-preview";
-
-      const voice = "coral";
-
-      // 🔥 CONFIGURACIÓN REALTIME CON AUDIO
-      const sessionConfig = {
-        type: "realtime",
-        model,
-        modalities: ["audio", "text"],
-        audio: {
-          input: {
-            format: "pcm16"
-          },
-          output: {
-            voice,
-            format: "pcm16"
-          }
-        }
-      };
-
-      const form = new FormData();
-      form.append("sdp", req.body);
-      form.append("session", JSON.stringify(sessionConfig));
+      const model = "gpt-4o-mini-realtime-preview";
 
       const openaiResp = await fetch(
-        "https://api.openai.com/v1/realtime/calls",
+        `https://api.openai.com/v1/realtime?model=${model}`,
         {
           method: "POST",
           headers: {
             Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            "Content-Type": "application/sdp",
           },
-          body: form,
+          body: req.body,
         }
       );
 
       if (!openaiResp.ok) {
-        const err = await openaiResp.text();
-        console.error("❌ OpenAI Realtime error:", err);
-        return res.status(500).send(err);
+        const errText = await openaiResp.text();
+        console.error("OpenAI error:", errText);
+        return res.status(500).send(errText);
       }
 
       const answerSdp = await openaiResp.text();
-      res.setHeader("Content-Type", "application/sdp");
-      return res.status(200).send(answerSdp);
 
+      // 🔎 DEBUG CRÍTICO
+      if (!answerSdp.startsWith("v=")) {
+        console.error("❌ OpenAI did NOT return SDP:");
+        console.error(answerSdp.slice(0, 200));
+        return res.status(500).send("Invalid SDP from OpenAI");
+      }
+
+      res.setHeader("Content-Type", "application/sdp");
+      return res.send(answerSdp);
     } catch (err) {
-      console.error("❌ Error en /session:", err);
-      return res.status(500).send("Error creando sesión Realtime");
+      console.error("Server /session error:", err);
+      res.status(500).send("Server error");
     }
   }
 );
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Server listening on port ${PORT}`);
+  console.log(`✅ Server listening on ${PORT}`);
 });
