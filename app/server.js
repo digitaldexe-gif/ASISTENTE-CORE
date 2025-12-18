@@ -1,7 +1,7 @@
 /**
  * =====================================================
  * server.js
- * BACKEND MÍNIMO Y ESTABLE DEL ASISTENTE
+ * BACKEND ESTABLE PARA RAILWAY
  * =====================================================
  */
 
@@ -9,40 +9,37 @@ import express from "express";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
 import path from "path";
-import { fileURLToPath } from "url";
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 3000;
 
-// === FIX ES MODULES (CRÍTICO) ===
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const publicPath = path.join(__dirname, "public");
+// 👉 Railway ejecuta desde /app
+const PUBLIC_DIR = path.join(process.cwd(), "public");
 
-// === MIDDLEWARES ===
+// ---------- MIDDLEWARES ----------
 app.use(express.json());
-app.use(express.static(publicPath));
+app.use(express.static(PUBLIC_DIR));
 
-// === ROOT (HTML) ===
-app.get("/", (req, res) => {
-  res.sendFile(path.join(publicPath, "index.html"));
-});
-
-// === HEALTH CHECK (Railway) ===
-app.get("/health", (req, res) => {
+// ---------- HEALTH CHECK ----------
+app.get("/health", (_req, res) => {
   res.status(200).send("OK");
 });
 
-// === REALTIME SESSION ===
+// ---------- FRONTEND ROOT ----------
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "index.html"));
+});
+
+// ---------- REALTIME SESSION ----------
 app.post("/session", async (req, res) => {
   try {
     const { model, voice, instructions } = req.body;
 
     if (!process.env.OPENAI_API_KEY) {
       return res.status(500).json({
-        error: "OPENAI_API_KEY no configurada",
+        error: "OPENAI_API_KEY no configurada en Railway",
       });
     }
 
@@ -64,13 +61,13 @@ app.post("/session", async (req, res) => {
 
     const data = await response.json();
     res.json(data);
-  } catch (error) {
-    console.error("Error creando sesión:", error);
-    res.status(500).json({ error: error.message });
+  } catch (err) {
+    console.error("Error creando sesión:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// === START SERVER ===
+// ---------- START SERVER ----------
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server listening on port ${PORT}`);
 });
