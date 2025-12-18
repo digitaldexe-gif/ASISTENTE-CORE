@@ -1,15 +1,11 @@
 /**
  * =====================================================
- * app.js
+ * app.js (DEBUG PROFUNDO)
  * =====================================================
- * Frontend WebRTC para OpenAI Realtime (audio real)
+ * Frontend WebRTC para OpenAI Realtime
  * - Captura micrófono
- * - Reproduce audio remoto del asistente
- * - Fuerza saludo hablado al iniciar llamada
- *
- * CLAVE:
- * - NO usar response.output_modalities (te da Unknown parameter)
- * - Usar response.modalities
+ * - Reproduce audio remoto
+ * - Instrumentación completa para depurar audio
  * =====================================================
  */
 
@@ -27,17 +23,20 @@ let pc = null;
 let dc = null;
 let localStream = null;
 let remoteAudio = null;
+let audioTrack = null;
+let statsInterval = null;
 
-function log(msg) {
+function log(msg, obj) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
   logEl.textContent += line + "\n";
   logEl.scrollTop = logEl.scrollHeight;
-  console.log(line);
+  console.log(line, obj ?? "");
 }
 
 function sendEvent(payload) {
   if (dc && dc.readyState === "open") {
     dc.send(JSON.stringify(payload));
+    log("➡️ Enviado a OpenAI", payload);
   }
 }
 
@@ -49,10 +48,20 @@ async function startCall() {
 
     log("📞 Llamar pulsado");
 
-    // 1) PeerConnection
+    // ===============================
+    // 1) RTCPeerConnection
+    // ===============================
     pc = new RTCPeerConnection();
 
+    pc.onconnectionstatechange = () =>
+      log("🌐 PC state:", pc.connectionState);
+
+    pc.oniceconnectionstatechange = () =>
+      log("🧊 ICE state:", pc.iceConnectionState);
+
+    // ===============================
     // 2) Audio remoto
+    // ===============================
     remoteAudio = document.createElement("audio");
     remoteAudio.autoplay = true;
     remoteAudio.playsInline = true;
@@ -61,24 +70,50 @@ async function startCall() {
     document.body.appendChild(remoteAudio);
 
     pc.ontrack = async (e) => {
-      log("🔊 Audio remoto recibido (track)");
+      audioTrack = e.track;
+      log("🔊 Track remoto recibido", {
+        kind: audioTrack.kind,
+        enabled: audioTrack.enabled,
+        muted: audioTrack.muted,
+        readyState: audioTrack.readyState,
+      });
+
       remoteAudio.srcObject = e.streams[0];
 
-      // Intentar play() (gesture ya ocurrió al pulsar "Llamar")
       try {
         await remoteAudio.play();
         log("✅ remoteAudio.play() OK");
       } catch (err) {
-        log("⚠️ remoteAudio.play() bloqueado: " + (err?.message || err));
+        log("❌ remoteAudio.play() FALLÓ", err);
       }
+
+      // ===============================
+      // STATS DE AUDIO (CLAVE)
+      // ===============================
+      statsInterval = setInterval(async () => {
+        const stats = await pc.getStats();
+        stats.forEach((r) => {
+          if (r.type === "inbound-rtp" && r.kind === "audio") {
+            log("📊 Audio stats", {
+              packetsReceived: r.packetsReceived,
+              bytesReceived: r.bytesReceived,
+              audioLevel: r.audioLevel,
+            });
+          }
+        });
+      }, 1000);
     };
 
+    // ===============================
     // 3) Micrófono
+    // ===============================
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
     log("🎤 Micrófono capturado");
 
+    // ===============================
     // 4) DataChannel
+    // ===============================
     dc = pc.createDataChannel("oai-events");
 
     dc.onopen = () => {
@@ -87,9 +122,6 @@ async function startCall() {
       const greeting = getGreetingByTime();
       const systemPrompt = VOICE_CONFIG.buildSystemPrompt({ greeting });
 
-      // A) Ajustar sesión (instrucciones)
-      // Nota: aquí NO meto output_modalities para evitar sorpresas;
-      // el audio ya viene por la pista remota si la sesión fue creada con voz.
       sendEvent({
         type: "session.update",
         session: {
@@ -97,7 +129,6 @@ async function startCall() {
         },
       });
 
-      // B) Crear item "user" que ordena el saludo EXACTO
       sendEvent({
         type: "conversation.item.create",
         item: {
@@ -106,56 +137,50 @@ async function startCall() {
           content: [
             {
               type: "input_text",
-              text:
-                `Di exactamente: "${greeting}, ${VOICE_CONFIG.clinicName}, le atiende ${VOICE_CONFIG.assistantName}." ` +
-                `Luego quédate en silencio y espera.`,
+              text: `Di exactamente: "${greeting}, ${VOICE_CONFIG.clinicName}, le atiende ${VOICE_CONFIG.assistantName}."`,
             },
           ],
         },
       });
 
-      // C) Pedir respuesta en AUDIO (✅ usar modalities, no output_modalities)
       sendEvent({
         type: "response.create",
         response: {
           modalities: ["audio", "text"],
-          // opcional: si quieres forzar un poco más:
-          // instructions: systemPrompt,
         },
       });
 
-      log("📢 Saludo solicitado al asistente (AUDIO)");
+      log("📢 Saludo solicitado (AUDIO)");
     };
 
     dc.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data?.type) log(`📩 Event: ${data.type}`);
+        log("📩 Evento OpenAI", data);
 
-        // Si quieres ver el error exacto cuando haya "Event: error"
-        if (data?.type === "error") {
-          log("❌ OpenAI error payload: " + JSON.stringify(data, null, 2));
+        if (data.type === "error") {
+          log("❌ ERROR OPENAI", data);
         }
-      } catch {
-        // ignore
+      } catch (e) {
+        log("⚠️ Mensaje no JSON", event.data);
       }
     };
 
-    // 5) SDP Offer -> backend /session -> SDP Answer
+    // ===============================
+    // 5) SDP
+    // ===============================
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
-    log("📡 Enviando SDP a /session…");
+    log("📡 Enviando SDP a /session");
+
     const sdpRes = await fetch("/session", {
       method: "POST",
       headers: { "Content-Type": "application/sdp" },
       body: offer.sdp,
     });
 
-    if (!sdpRes.ok) {
-      const err = await sdpRes.text();
-      throw new Error("Error /session: " + err);
-    }
+    if (!sdpRes.ok) throw new Error(await sdpRes.text());
 
     const answerSdp = await sdpRes.text();
     await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
@@ -163,8 +188,7 @@ async function startCall() {
     statusEl.textContent = "En llamada…";
     log("✅ Llamada establecida");
   } catch (e) {
-    log("❌ Error: " + (e?.message || e));
-    statusEl.textContent = "Error";
+    log("❌ Error fatal", e);
     stopCall();
   }
 }
@@ -172,15 +196,13 @@ async function startCall() {
 function stopCall() {
   log("🛑 Colgar pulsado");
 
+  clearInterval(statsInterval);
+
   startBtn.disabled = false;
   stopBtn.disabled = true;
 
-  try {
-    dc?.close();
-  } catch {}
-  try {
-    pc?.close();
-  } catch {}
+  try { dc?.close(); } catch {}
+  try { pc?.close(); } catch {}
 
   localStream?.getTracks().forEach((t) => t.stop());
 
@@ -189,11 +211,7 @@ function stopCall() {
     remoteAudio.remove();
   }
 
-  pc = null;
-  dc = null;
-  localStream = null;
-  remoteAudio = null;
-
+  pc = dc = localStream = remoteAudio = audioTrack = null;
   statusEl.textContent = "Listo.";
   log("🔴 Llamada finalizada");
 }

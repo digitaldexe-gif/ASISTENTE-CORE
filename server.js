@@ -1,10 +1,10 @@
 /**
  * =====================================================
- * server.js
+ * server.js (FIX AUDIO REALTIME)
  * =====================================================
- * Backend estable para OpenAI Realtime WebRTC
- * - Sirve frontend estático (/public)
- * - Crea sesión Realtime con AUDIO REAL
+ * Backend para OpenAI Realtime WebRTC
+ * - Sirve frontend
+ * - Crea sesión Realtime CON AUDIO REAL
  * =====================================================
  */
 
@@ -12,6 +12,8 @@ import express from "express";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
+import fetch from "node-fetch";
+import FormData from "form-data";
 
 dotenv.config();
 
@@ -22,10 +24,7 @@ const PORT = process.env.PORT || 3000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// JSON normal
-app.use(express.json());
-
-// Frontend
+// Static
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/utils", express.static(path.join(__dirname, "utils")));
 
@@ -36,7 +35,7 @@ app.get("/health", (_, res) => res.send("OK"));
  * -------------------------------------
  * POST /session
  * -------------------------------------
- * Recibe SDP (offer) del navegador
+ * Recibe SDP (offer)
  * Devuelve SDP (answer) desde OpenAI Realtime
  */
 app.post(
@@ -52,19 +51,36 @@ app.post(
         process.env.REALTIME_MODEL ||
         "gpt-4o-mini-realtime-preview";
 
-      // ⚠️ VOZ REAL (la misma que usas en voice-config.js)
       const voice = "coral";
 
-      // 👉 Enviar SDP DIRECTAMENTE (no FormData)
+      // 🔥 CONFIGURACIÓN REALTIME CON AUDIO
+      const sessionConfig = {
+        type: "realtime",
+        model,
+        modalities: ["audio", "text"],
+        audio: {
+          input: {
+            format: "pcm16"
+          },
+          output: {
+            voice,
+            format: "pcm16"
+          }
+        }
+      };
+
+      const form = new FormData();
+      form.append("sdp", req.body);
+      form.append("session", JSON.stringify(sessionConfig));
+
       const openaiResp = await fetch(
-        `https://api.openai.com/v1/realtime?model=${model}`,
+        "https://api.openai.com/v1/realtime/calls",
         {
           method: "POST",
           headers: {
             Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            "Content-Type": "application/sdp",
           },
-          body: req.body,
+          body: form,
         }
       );
 
@@ -75,9 +91,9 @@ app.post(
       }
 
       const answerSdp = await openaiResp.text();
-
       res.setHeader("Content-Type", "application/sdp");
       return res.status(200).send(answerSdp);
+
     } catch (err) {
       console.error("❌ Error en /session:", err);
       return res.status(500).send("Error creando sesión Realtime");
