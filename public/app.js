@@ -5,7 +5,6 @@
  * - WebSocket directo a OpenAI Realtime
  * - Audio PCM16 reproducido con AudioContext
  * - LOG EXTENDIDO ABSOLUTO
- * - Objetivo: VER SI OPENAI ENVÍA AUDIO O NO
  * =====================================================
  */
 
@@ -23,6 +22,7 @@ let ws = null;
 let audioCtx = null;
 let audioQueue = [];
 let isPlaying = false;
+let audioReceived = false;
 
 /* =========================
    LOG UTIL
@@ -40,6 +40,7 @@ function log(msg, data) {
    AUDIO PCM16 → AUDIOCONTEXT
 ========================= */
 function playPCM16(base64Audio) {
+  audioReceived = true;
   log("🔊 playPCM16() llamado");
 
   if (!audioCtx) {
@@ -56,11 +57,7 @@ function playPCM16(base64Audio) {
   }
 
   const pcm16 = new Int16Array(buffer);
-  const audioBuffer = audioCtx.createBuffer(
-    1,
-    pcm16.length,
-    24000
-  );
+  const audioBuffer = audioCtx.createBuffer(1, pcm16.length, 24000);
 
   const channel = audioBuffer.getChannelData(0);
   for (let i = 0; i < pcm16.length; i++) {
@@ -74,7 +71,6 @@ function playPCM16(base64Audio) {
 function playQueue() {
   if (audioQueue.length === 0) {
     isPlaying = false;
-    log("🔇 Cola de audio vacía");
     return;
   }
 
@@ -84,11 +80,7 @@ function playQueue() {
   source.buffer = buffer;
   source.connect(audioCtx.destination);
   source.start();
-
-  source.onended = () => {
-    log("🔁 Fragmento de audio terminado");
-    playQueue();
-  };
+  source.onended = playQueue;
 }
 
 /* =========================
@@ -101,45 +93,32 @@ async function startCall() {
 
   log("📞 Llamar pulsado");
 
-  /* 🔴 PASO CRÍTICO ANTES DEL WS (CAMBIO PEDIDO) */
   audioCtx = new AudioContext({ sampleRate: 24000 });
   await audioCtx.resume();
-  log("🎧 AudioContext creado y resumido", {
-    state: audioCtx.state,
-    sampleRate: audioCtx.sampleRate
-  });
+  log("🎧 AudioContext activo", audioCtx.state);
 
   if (!window.OPENAI_API_KEY) {
-    log("❌ OPENAI_API_KEY NO INYECTADA EN FRONTEND");
-    statusEl.textContent = "Error API KEY";
+    log("❌ OPENAI_API_KEY NO INYECTADA");
     return;
   }
-
-  log("🔑 OPENAI_API_KEY presente (no se muestra)");
 
   const greeting = getGreetingByTime();
   const systemPrompt = VOICE_CONFIG.buildSystemPrompt({ greeting });
 
-  log("🧠 System prompt generado", systemPrompt);
-
-  /* =========================
-     WEBSOCKET
-  ========================= */
-  const wsUrl = `wss://api.openai.com/v1/realtime?model=${VOICE_CONFIG.model}`;
-  log("🌐 Abriendo WebSocket", wsUrl);
-
-  ws = new WebSocket(wsUrl, {
-    headers: {
-      Authorization: `Bearer ${window.OPENAI_API_KEY}`,
-      "OpenAI-Beta": "realtime=v1"
+  ws = new WebSocket(
+    `wss://api.openai.com/v1/realtime?model=${VOICE_CONFIG.model}`,
+    {
+      headers: {
+        Authorization: `Bearer ${window.OPENAI_API_KEY}`,
+        "OpenAI-Beta": "realtime=v1"
+      }
     }
-  });
+  );
 
   ws.onopen = () => {
     log("🟢 WebSocket OPEN");
 
-    /* SESSION.UPDATE */
-    const sessionUpdate = {
+    ws.send(JSON.stringify({
       type: "session.update",
       session: {
         modalities: ["audio", "text"],
@@ -149,58 +128,39 @@ async function startCall() {
         output_audio_format: "pcm16",
         turn_detection: { type: "server_vad" }
       }
-    };
+    }));
 
-    log("📤 Enviando session.update", sessionUpdate);
-    ws.send(JSON.stringify(sessionUpdate));
-
-    /* RESPONSE.CREATE (SALUDO) */
-    const responseCreate = {
+    ws.send(JSON.stringify({
       type: "response.create",
       response: {
         modalities: ["audio", "text"],
         instructions:
-          `${greeting}, ${VOICE_CONFIG.clinicName}, le atiende ${VOICE_CONFIG.assistantName}.`
+          `Di exactamente: "${greeting}, ${VOICE_CONFIG.clinicName}, le atiende ${VOICE_CONFIG.assistantName}."`
       }
-    };
-
-    log("📤 Enviando response.create (saludo)", responseCreate);
-    ws.send(JSON.stringify(responseCreate));
+    }));
 
     statusEl.textContent = "En llamada…";
+
+    // Watchdog
+    setTimeout(() => {
+      if (!audioReceived) {
+        log("⚠️ DIAGNÓSTICO: OpenAI NO ha enviado audio");
+      }
+    }, 4000);
   };
 
   ws.onmessage = (event) => {
-    let msg;
-    try {
-      msg = JSON.parse(event.data);
-    } catch {
-      log("❌ Mensaje NO JSON recibido", event.data);
-      return;
-    }
-
-    log("📩 EVENTO RECIBIDO", msg);
+    const msg = JSON.parse(event.data);
+    log("📩 EVENTO", msg);
 
     if (msg.type === "response.audio.delta") {
-      log("🎵 AUDIO DELTA RECIBIDO (base64 length)", msg.delta?.length);
+      log("🎵 AUDIO DELTA RECIBIDO", msg.delta?.length);
       playPCM16(msg.delta);
-    }
-
-    if (msg.type === "response.done") {
-      log("✅ response.done");
     }
 
     if (msg.type === "error") {
       log("❌ ERROR OPENAI", msg.error);
     }
-  };
-
-  ws.onerror = (e) => {
-    log("❌ WebSocket ERROR", e);
-  };
-
-  ws.onclose = (e) => {
-    log("🔴 WebSocket CLOSED", e);
   };
 }
 
@@ -210,9 +170,6 @@ async function startCall() {
 function stopCall() {
   log("🛑 Colgar pulsado");
 
-  startBtn.disabled = false;
-  stopBtn.disabled = true;
-
   try { ws?.close(); } catch {}
   try { audioCtx?.close(); } catch {}
 
@@ -220,7 +177,10 @@ function stopCall() {
   audioCtx = null;
   audioQueue = [];
   isPlaying = false;
+  audioReceived = false;
 
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
   statusEl.textContent = "Listo.";
 }
 
