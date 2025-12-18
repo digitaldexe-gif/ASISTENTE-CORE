@@ -5,32 +5,24 @@
  * CEREBRO CONVERSACIONAL DEL ASISTENTE
  *
  * Define:
- * - Tono
- * - Ritmo
- * - Humanidad
- * - Empatía
+ * - Tono, ritmo, humanidad, empatía
  *
- * Importante (Realtime):
- * - La voz DEBE ser una de las soportadas:
- *   alloy, ash, ballad, coral, echo, sage, shimmer, verse
+ * Importante:
+ * - Usa una VOZ soportada por Realtime.
+ * =====================================================
  */
 
 export const VOICE_CONFIG = {
   assistantName: "María",
   clinicName: "Clínica Dental Sonrisas",
 
-  // Tu modelo
+  // Modelo que estás usando
   model: "gpt-4o-mini-realtime-preview",
 
-  // ✅ Voz válida (antes tenías "nova", que NO existe en Realtime)
+  // ✅ Usa una voz segura/soportada (evita "nova" aquí)
   voice: "coral",
 
   temperature: 0.65,
-
-  realtimeSessionDefaults: {
-    modalities: ["audio", "text"],
-    output_audio_format: "pcm16",
-  },
 
   buildSystemPrompt({ greeting, patientName }) {
     return `
