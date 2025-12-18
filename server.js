@@ -27,26 +27,31 @@ const PORT = process.env.PORT || 3000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Middlewares
+// -------------------------------------
+// MIDDLEWARES
+// -------------------------------------
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-/**
- * -------------------------------------
- * HEALTH CHECK (Railway)
- * -------------------------------------
- */
+// -------------------------------------
+// RUTA PRINCIPAL (HTML)
+// 👉 ESTO ES LO QUE FALTABA
+// -------------------------------------
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// -------------------------------------
+// HEALTH CHECK (Railway)
+// -------------------------------------
 app.get("/health", (req, res) => {
   res.status(200).send("OK");
 });
 
-/**
- * -------------------------------------
- * POST /session
- * -------------------------------------
- * Crea una sesión Realtime segura
- * Devuelve client_secret al navegador
- */
+// -------------------------------------
+// POST /session
+// Crea una sesión Realtime segura
+// -------------------------------------
 app.post("/session", async (req, res) => {
   try {
     const { model, voice, instructions } = req.body;
@@ -81,11 +86,10 @@ app.post("/session", async (req, res) => {
   }
 });
 
-/**
- * -------------------------------------
- * START SERVER (Railway compatible)
- * -------------------------------------
- */
+// -------------------------------------
+// START SERVER (Railway compatible)
+// -------------------------------------
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server listening on port ${PORT}`);
 });
+
