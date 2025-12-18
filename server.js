@@ -2,13 +2,8 @@
  * =====================================================
  * server.js
  * =====================================================
- * BACKEND MÍNIMO Y ESTABLE DEL ASISTENTE
- *
- * Compatible con:
- * - DEV (navegador)
- * - PROD (Railway / telefonía)
- *
- * Importancia: CRÍTICA
+ * Backend mínimo y estable
+ * Compatible con Railway
  * =====================================================
  */
 
@@ -21,37 +16,39 @@ import { fileURLToPath } from "url";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
-// Fix para ES Modules
+// Fix ES Modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// -------------------------------------
-// MIDDLEWARES
-// -------------------------------------
+// Middlewares
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// -------------------------------------
-// RUTA PRINCIPAL (HTML)
-// 👉 ESTO ES LO QUE FALTABA
-// -------------------------------------
+/**
+ * -------------------------------------
+ * ROOT → INDEX.HTML (FIX DEFINITIVO)
+ * -------------------------------------
+ */
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// -------------------------------------
-// HEALTH CHECK (Railway)
-// -------------------------------------
+/**
+ * -------------------------------------
+ * HEALTH CHECK (Railway)
+ * -------------------------------------
+ */
 app.get("/health", (req, res) => {
   res.status(200).send("OK");
 });
 
-// -------------------------------------
-// POST /session
-// Crea una sesión Realtime segura
-// -------------------------------------
+/**
+ * -------------------------------------
+ * POST /session
+ * -------------------------------------
+ */
 app.post("/session", async (req, res) => {
   try {
     const { model, voice, instructions } = req.body;
@@ -86,10 +83,11 @@ app.post("/session", async (req, res) => {
   }
 });
 
-// -------------------------------------
-// START SERVER (Railway compatible)
-// -------------------------------------
+/**
+ * -------------------------------------
+ * START SERVER
+ * -------------------------------------
+ */
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server listening on port ${PORT}`);
 });
-
