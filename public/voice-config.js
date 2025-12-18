@@ -33,7 +33,7 @@ export const VOICE_CONFIG = {
    * Voz:
    * - 'coral' es una voz soportada por OpenAI.
    */
-  voice: "coral",
+  voice: "nova",
 
   /**
    * Temperatura para el comportamiento conversacional
