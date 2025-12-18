@@ -1,0 +1,14 @@
+{
+  "name": "realtime-voice-core",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Core conversacional de asistente telefónico humano con OpenAI Realtime",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "dotenv": "^16.4.5"
+  }
+}
