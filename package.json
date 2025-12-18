@@ -3,17 +3,17 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Core conversacional de asistente telefónico humano con OpenAI Realtime",
+  "engines": {
+    "node": "18.x"
+  },
   "scripts": {
-    "dev": "node server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
     "dotenv": "^16.4.5",
+    "express": "^4.19.2",
     "node-fetch": "^3.3.2"
-  },
-  "engines": {
-    "node": ">=18"
   }
 }
 
