@@ -1,194 +1,228 @@
 /**
  * =====================================================
- * app.js
+ * app.js  (DIAGNÓSTICO FORENSE – MODELO BOLT)
  * =====================================================
- * Frontend WebRTC para OpenAI Realtime
- * - NO define audio
- * - SOLO envía instrucciones
+ * - WebSocket directo a OpenAI Realtime
+ * - Audio PCM16 reproducido con AudioContext
+ * - LOG EXTENDIDO ABSOLUTO
+ * - Objetivo: VER SI OPENAI ENVÍA AUDIO O NO
  * =====================================================
  */
 
 import { VOICE_CONFIG } from "./voice-config.js";
 import { getGreetingByTime } from "./utils/greeting.js";
 
-console.log("app.js cargado");
+console.log("✅ app.js cargado (modo diagnóstico)");
 
 const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
 const statusEl = document.getElementById("status");
 const logEl = document.getElementById("log");
 
-let pc = null;
-let dc = null;
-let localStream = null;
-let remoteAudio = null;
+let ws = null;
+let audioCtx = null;
+let audioQueue = [];
+let isPlaying = false;
 
-function log(msg) {
-  const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+/* =========================
+   LOG UTIL
+========================= */
+function log(msg, data) {
+  const line =
+    `[${new Date().toLocaleTimeString()}] ${msg}` +
+    (data ? "\n" + JSON.stringify(data, null, 2) : "");
   logEl.textContent += line + "\n";
   logEl.scrollTop = logEl.scrollHeight;
-  console.log(line);
+  console.log(msg, data ?? "");
 }
 
-function sendEvent(payload) {
-  if (dc && dc.readyState === "open") {
-    dc.send(JSON.stringify(payload));
+/* =========================
+   AUDIO PCM16 → AUDIOCONTEXT
+========================= */
+function playPCM16(base64Audio) {
+  log("🔊 playPCM16() llamado");
+
+  if (!audioCtx) {
+    log("❌ audioCtx NO existe");
+    return;
   }
+
+  const binary = atob(base64Audio);
+  const buffer = new ArrayBuffer(binary.length);
+  const view = new Uint8Array(buffer);
+
+  for (let i = 0; i < binary.length; i++) {
+    view[i] = binary.charCodeAt(i);
+  }
+
+  const pcm16 = new Int16Array(buffer);
+  const audioBuffer = audioCtx.createBuffer(
+    1,
+    pcm16.length,
+    24000
+  );
+
+  const channel = audioBuffer.getChannelData(0);
+  for (let i = 0; i < pcm16.length; i++) {
+    channel[i] = pcm16[i] / 32768;
+  }
+
+  audioQueue.push(audioBuffer);
+  if (!isPlaying) playQueue();
 }
 
+function playQueue() {
+  if (audioQueue.length === 0) {
+    isPlaying = false;
+    log("🔇 Cola de audio vacía");
+    return;
+  }
+
+  isPlaying = true;
+  const buffer = audioQueue.shift();
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audioCtx.destination);
+  source.start();
+
+  source.onended = () => {
+    log("🔁 Fragmento de audio terminado");
+    playQueue();
+  };
+}
+
+/* =========================
+   START CALL
+========================= */
 async function startCall() {
-  try {
-    startBtn.disabled = true;
-    stopBtn.disabled = false;
-    statusEl.textContent = "Conectando…";
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+  statusEl.textContent = "Conectando…";
 
-    log("📞 Llamar pulsado");
+  log("📞 Llamar pulsado");
 
-    // ================================
-// 🔊 TEST TTS (aislar problema audio)
-// ================================
-const greeting = getGreetingByTime();
-const text =
-  `${greeting}, ${VOICE_CONFIG.clinicName}, le atiende ${VOICE_CONFIG.assistantName}.`;
+  /* 🔴 PASO CRÍTICO ANTES DEL WS (CAMBIO PEDIDO) */
+  audioCtx = new AudioContext({ sampleRate: 24000 });
+  await audioCtx.resume();
+  log("🎧 AudioContext creado y resumido", {
+    state: audioCtx.state,
+    sampleRate: audioCtx.sampleRate
+  });
 
-await playTTS(text);
+  if (!window.OPENAI_API_KEY) {
+    log("❌ OPENAI_API_KEY NO INYECTADA EN FRONTEND");
+    statusEl.textContent = "Error API KEY";
+    return;
+  }
 
-// ⛔️ Paramos aquí SOLO para la prueba
-statusEl.textContent = "TTS test";
-return;
+  log("🔑 OPENAI_API_KEY presente (no se muestra)");
 
+  const greeting = getGreetingByTime();
+  const systemPrompt = VOICE_CONFIG.buildSystemPrompt({ greeting });
 
+  log("🧠 System prompt generado", systemPrompt);
 
-    pc = new RTCPeerConnection();
+  /* =========================
+     WEBSOCKET
+  ========================= */
+  const wsUrl = `wss://api.openai.com/v1/realtime?model=${VOICE_CONFIG.model}`;
+  log("🌐 Abriendo WebSocket", wsUrl);
 
-    // Audio remoto
-    remoteAudio = document.createElement("audio");
-    remoteAudio.autoplay = true;
-    remoteAudio.playsInline = true;
-    remoteAudio.volume = 1;
-    document.body.appendChild(remoteAudio);
+  ws = new WebSocket(wsUrl, {
+    headers: {
+      Authorization: `Bearer ${window.OPENAI_API_KEY}`,
+      "OpenAI-Beta": "realtime=v1"
+    }
+  });
 
-    pc.ontrack = async (e) => {
-      log("🔊 Track de audio recibido");
-      remoteAudio.srcObject = e.streams[0];
-      await remoteAudio.play().catch(() => {});
+  ws.onopen = () => {
+    log("🟢 WebSocket OPEN");
+
+    /* SESSION.UPDATE */
+    const sessionUpdate = {
+      type: "session.update",
+      session: {
+        modalities: ["audio", "text"],
+        voice: VOICE_CONFIG.voice,
+        instructions: systemPrompt,
+        input_audio_format: "pcm16",
+        output_audio_format: "pcm16",
+        turn_detection: { type: "server_vad" }
+      }
     };
 
-    // Micrófono
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
-    log("🎤 Micrófono capturado");
+    log("📤 Enviando session.update", sessionUpdate);
+    ws.send(JSON.stringify(sessionUpdate));
 
-    // DataChannel
-    dc = pc.createDataChannel("oai-events");
-
-    dc.onopen = () => {
-      log("🟢 DataChannel abierto");
-
-      const greeting = getGreetingByTime();
-      const systemPrompt = VOICE_CONFIG.buildSystemPrompt({ greeting });
-
-      // SOLO instrucciones
-      sendEvent({
-        type: "session.update",
-        session: {
-          instructions: systemPrompt
-        }
-      });
-
-      // Orden de saludo
-      sendEvent({
-        type: "conversation.item.create",
-        item: {
-          type: "message",
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: `Di exactamente: "${greeting}, ${VOICE_CONFIG.clinicName}, le atiende ${VOICE_CONFIG.assistantName}."`
-            }
-          ]
-        }
-      });
-
-      // Solicitar respuesta (sin modalities)
-      sendEvent({
-        type: "response.create"
-      });
-
-      log("📢 Saludo solicitado");
+    /* RESPONSE.CREATE (SALUDO) */
+    const responseCreate = {
+      type: "response.create",
+      response: {
+        modalities: ["audio", "text"],
+        instructions:
+          `${greeting}, ${VOICE_CONFIG.clinicName}, le atiende ${VOICE_CONFIG.assistantName}.`
+      }
     };
 
-    // SDP
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-
-    const sdpRes = await fetch("/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/sdp" },
-      body: offer.sdp
-    });
-
-    const answerSdp = await sdpRes.text();
-    await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+    log("📤 Enviando response.create (saludo)", responseCreate);
+    ws.send(JSON.stringify(responseCreate));
 
     statusEl.textContent = "En llamada…";
-    log("✅ Llamada establecida");
-  } catch (err) {
-    log("❌ Error: " + err.message);
-    stopCall();
-  }
+  };
+
+  ws.onmessage = (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      log("❌ Mensaje NO JSON recibido", event.data);
+      return;
+    }
+
+    log("📩 EVENTO RECIBIDO", msg);
+
+    if (msg.type === "response.audio.delta") {
+      log("🎵 AUDIO DELTA RECIBIDO (base64 length)", msg.delta?.length);
+      playPCM16(msg.delta);
+    }
+
+    if (msg.type === "response.done") {
+      log("✅ response.done");
+    }
+
+    if (msg.type === "error") {
+      log("❌ ERROR OPENAI", msg.error);
+    }
+  };
+
+  ws.onerror = (e) => {
+    log("❌ WebSocket ERROR", e);
+  };
+
+  ws.onclose = (e) => {
+    log("🔴 WebSocket CLOSED", e);
+  };
 }
 
+/* =========================
+   STOP CALL
+========================= */
 function stopCall() {
   log("🛑 Colgar pulsado");
 
   startBtn.disabled = false;
   stopBtn.disabled = true;
 
-  try { dc?.close(); } catch {}
-  try { pc?.close(); } catch {}
+  try { ws?.close(); } catch {}
+  try { audioCtx?.close(); } catch {}
 
-  localStream?.getTracks().forEach(t => t.stop());
-  remoteAudio?.remove();
+  ws = null;
+  audioCtx = null;
+  audioQueue = [];
+  isPlaying = false;
 
-  pc = dc = localStream = remoteAudio = null;
   statusEl.textContent = "Listo.";
-  log("🔴 Llamada finalizada");
 }
 
 startBtn.onclick = startCall;
 stopBtn.onclick = stopCall;
-
-
-
-
-// AJUSTE AUDIO TTS
-
-
-async function playTTS(text) {
-  log("🔊 Solicitando TTS…");
-
-  try {
-    const resp = await fetch("/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-
-    if (!resp.ok) {
-      throw new Error(await resp.text());
-    }
-
-    const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-
-    const audio = new Audio(url);
-    audio.volume = 1;
-
-    await audio.play();
-    log("✅ TTS reproducido correctamente");
-  } catch (err) {
-    log("❌ Error TTS: " + err.message);
-  }
-}

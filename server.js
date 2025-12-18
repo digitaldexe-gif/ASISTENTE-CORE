@@ -1,8 +1,11 @@
 /**
  * =====================================================
- * server.js
+ * server.js  (MODELO BOLT)
  * =====================================================
- * Backend estable para OpenAI Realtime WebRTC
+ * - Sirve frontend estático
+ * - Inyecta OPENAI_API_KEY al navegador
+ * - NO WebRTC
+ * - NO TTS
  * =====================================================
  */
 
@@ -16,7 +19,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ES modules fix
+// ES Modules fix
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -24,103 +27,26 @@ const __dirname = path.dirname(__filename);
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/utils", express.static(path.join(__dirname, "utils")));
 
-// Health
+// Health check (Railway)
 app.get("/health", (_, res) => res.send("OK"));
 
 /**
- * POST /session
- * Recibe SDP (offer)
- * Devuelve SDP (answer)
+ * -----------------------------------------------------
+ * GET /config
+ * Entrega configuración mínima al frontend
+ * (MODELO BOLT)
+ * -----------------------------------------------------
  */
-app.post(
-  "/session",
-  express.text({ type: ["application/sdp"] }),
-  async (req, res) => {
-    try {
-      if (!process.env.OPENAI_API_KEY) {
-        return res.status(500).send("OPENAI_API_KEY missing");
-      }
-
-      const model = "gpt-4o-mini-realtime-preview";
-
-      const openaiResp = await fetch(
-        `https://api.openai.com/v1/realtime?model=${model}`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            "Content-Type": "application/sdp",
-          },
-          body: req.body,
-        }
-      );
-
-      if (!openaiResp.ok) {
-        const errText = await openaiResp.text();
-        console.error("OpenAI error:", errText);
-        return res.status(500).send(errText);
-      }
-
-      const answerSdp = await openaiResp.text();
-
-      // 🔎 DEBUG CRÍTICO
-      if (!answerSdp.startsWith("v=")) {
-        console.error("❌ OpenAI did NOT return SDP:");
-        console.error(answerSdp.slice(0, 200));
-        return res.status(500).send("Invalid SDP from OpenAI");
-      }
-
-      res.setHeader("Content-Type", "application/sdp");
-      return res.send(answerSdp);
-    } catch (err) {
-      console.error("Server /session error:", err);
-      res.status(500).send("Server error");
-    }
+app.get("/config", (req, res) => {
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(500).json({ error: "OPENAI_API_KEY missing" });
   }
-);
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Server listening on ${PORT}`);
+  res.json({
+    openaiKey: process.env.OPENAI_API_KEY
+  });
 });
 
-
-
-/**
- *VERSIÓN AUDIO TTS
- */
-
-app.post("/tts", express.json(), async (req, res) => {
-  try {
-    const { text } = req.body;
-
-    if (!text) {
-      return res.status(400).send("No text provided");
-    }
-
-    const openaiResp = await fetch("https://api.openai.com/v1/audio/speech", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini-tts",
-        voice: "coral",
-        input: text,
-        format: "mp3",
-      }),
-    });
-
-    if (!openaiResp.ok) {
-      const err = await openaiResp.text();
-      console.error("❌ TTS error:", err);
-      return res.status(500).send(err);
-    }
-
-    res.setHeader("Content-Type", "audio/mpeg");
-    openaiResp.body.pipe(res);
-  } catch (err) {
-    console.error("❌ /tts error:", err);
-    res.status(500).send("TTS failed");
-  }
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`✅ Server listening on port ${PORT}`);
 });
