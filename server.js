@@ -2,8 +2,13 @@
  * =====================================================
  * server.js
  * =====================================================
- * Backend mínimo y estable
- * Compatible con Railway
+ * BACKEND MÍNIMO Y ESTABLE DEL ASISTENTE
+ *
+ * Compatible con:
+ * - DEV (navegador)
+ * - PROD (Railway / telefonía)
+ *
+ * Importancia: CRÍTICA
  * =====================================================
  */
 
@@ -16,7 +21,7 @@ import { fileURLToPath } from "url";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 3000;
 
 // Fix ES Modules
 const __filename = fileURLToPath(import.meta.url);
@@ -28,7 +33,7 @@ app.use(express.static(path.join(__dirname, "public")));
 
 /**
  * -------------------------------------
- * ROOT → INDEX.HTML (FIX DEFINITIVO)
+ * ROOT → index.html
  * -------------------------------------
  */
 app.get("/", (req, res) => {
@@ -85,7 +90,7 @@ app.post("/session", async (req, res) => {
 
 /**
  * -------------------------------------
- * START SERVER
+ * START SERVER (Railway compatible)
  * -------------------------------------
  */
 app.listen(PORT, "0.0.0.0", () => {
