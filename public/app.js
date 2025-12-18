@@ -1,11 +1,10 @@
 /**
  * =====================================================
- * app.js (DEBUG PROFUNDO)
+ * app.js
  * =====================================================
  * Frontend WebRTC para OpenAI Realtime
- * - Captura micrófono
- * - Reproduce audio remoto
- * - Instrumentación completa para depurar audio
+ * - NO define audio
+ * - SOLO envía instrucciones
  * =====================================================
  */
 
@@ -23,20 +22,17 @@ let pc = null;
 let dc = null;
 let localStream = null;
 let remoteAudio = null;
-let audioTrack = null;
-let statsInterval = null;
 
-function log(msg, obj) {
+function log(msg) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
   logEl.textContent += line + "\n";
   logEl.scrollTop = logEl.scrollHeight;
-  console.log(line, obj ?? "");
+  console.log(line);
 }
 
 function sendEvent(payload) {
   if (dc && dc.readyState === "open") {
     dc.send(JSON.stringify(payload));
-    log("➡️ Enviado a OpenAI", payload);
   }
 }
 
@@ -48,72 +44,27 @@ async function startCall() {
 
     log("📞 Llamar pulsado");
 
-    // ===============================
-    // 1) RTCPeerConnection
-    // ===============================
     pc = new RTCPeerConnection();
 
-    pc.onconnectionstatechange = () =>
-      log("🌐 PC state:", pc.connectionState);
-
-    pc.oniceconnectionstatechange = () =>
-      log("🧊 ICE state:", pc.iceConnectionState);
-
-    // ===============================
-    // 2) Audio remoto
-    // ===============================
+    // Audio remoto
     remoteAudio = document.createElement("audio");
     remoteAudio.autoplay = true;
     remoteAudio.playsInline = true;
-    remoteAudio.muted = false;
     remoteAudio.volume = 1;
     document.body.appendChild(remoteAudio);
 
     pc.ontrack = async (e) => {
-      audioTrack = e.track;
-      log("🔊 Track remoto recibido", {
-        kind: audioTrack.kind,
-        enabled: audioTrack.enabled,
-        muted: audioTrack.muted,
-        readyState: audioTrack.readyState,
-      });
-
+      log("🔊 Track de audio recibido");
       remoteAudio.srcObject = e.streams[0];
-
-      try {
-        await remoteAudio.play();
-        log("✅ remoteAudio.play() OK");
-      } catch (err) {
-        log("❌ remoteAudio.play() FALLÓ", err);
-      }
-
-      // ===============================
-      // STATS DE AUDIO (CLAVE)
-      // ===============================
-      statsInterval = setInterval(async () => {
-        const stats = await pc.getStats();
-        stats.forEach((r) => {
-          if (r.type === "inbound-rtp" && r.kind === "audio") {
-            log("📊 Audio stats", {
-              packetsReceived: r.packetsReceived,
-              bytesReceived: r.bytesReceived,
-              audioLevel: r.audioLevel,
-            });
-          }
-        });
-      }, 1000);
+      await remoteAudio.play().catch(() => {});
     };
 
-    // ===============================
-    // 3) Micrófono
-    // ===============================
+    // Micrófono
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
     log("🎤 Micrófono capturado");
 
-    // ===============================
-    // 4) DataChannel
-    // ===============================
+    // DataChannel
     dc = pc.createDataChannel("oai-events");
 
     dc.onopen = () => {
@@ -122,13 +73,15 @@ async function startCall() {
       const greeting = getGreetingByTime();
       const systemPrompt = VOICE_CONFIG.buildSystemPrompt({ greeting });
 
+      // SOLO instrucciones
       sendEvent({
         type: "session.update",
         session: {
-          instructions: systemPrompt,
-        },
+          instructions: systemPrompt
+        }
       });
 
+      // Orden de saludo
       sendEvent({
         type: "conversation.item.create",
         item: {
@@ -137,58 +90,37 @@ async function startCall() {
           content: [
             {
               type: "input_text",
-              text: `Di exactamente: "${greeting}, ${VOICE_CONFIG.clinicName}, le atiende ${VOICE_CONFIG.assistantName}."`,
-            },
-          ],
-        },
-      });
-
-      sendEvent({
-        type: "response.create",
-        response: {
-          modalities: ["audio", "text"],
-        },
-      });
-
-      log("📢 Saludo solicitado (AUDIO)");
-    };
-
-    dc.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        log("📩 Evento OpenAI", data);
-
-        if (data.type === "error") {
-          log("❌ ERROR OPENAI", data);
+              text: `Di exactamente: "${greeting}, ${VOICE_CONFIG.clinicName}, le atiende ${VOICE_CONFIG.assistantName}."`
+            }
+          ]
         }
-      } catch (e) {
-        log("⚠️ Mensaje no JSON", event.data);
-      }
+      });
+
+      // Solicitar respuesta (sin modalities)
+      sendEvent({
+        type: "response.create"
+      });
+
+      log("📢 Saludo solicitado");
     };
 
-    // ===============================
-    // 5) SDP
-    // ===============================
+    // SDP
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-
-    log("📡 Enviando SDP a /session");
 
     const sdpRes = await fetch("/session", {
       method: "POST",
       headers: { "Content-Type": "application/sdp" },
-      body: offer.sdp,
+      body: offer.sdp
     });
-
-    if (!sdpRes.ok) throw new Error(await sdpRes.text());
 
     const answerSdp = await sdpRes.text();
     await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
     statusEl.textContent = "En llamada…";
     log("✅ Llamada establecida");
-  } catch (e) {
-    log("❌ Error fatal", e);
+  } catch (err) {
+    log("❌ Error: " + err.message);
     stopCall();
   }
 }
@@ -196,22 +128,16 @@ async function startCall() {
 function stopCall() {
   log("🛑 Colgar pulsado");
 
-  clearInterval(statsInterval);
-
   startBtn.disabled = false;
   stopBtn.disabled = true;
 
   try { dc?.close(); } catch {}
   try { pc?.close(); } catch {}
 
-  localStream?.getTracks().forEach((t) => t.stop());
+  localStream?.getTracks().forEach(t => t.stop());
+  remoteAudio?.remove();
 
-  if (remoteAudio) {
-    remoteAudio.srcObject = null;
-    remoteAudio.remove();
-  }
-
-  pc = dc = localStream = remoteAudio = audioTrack = null;
+  pc = dc = localStream = remoteAudio = null;
   statusEl.textContent = "Listo.";
   log("🔴 Llamada finalizada");
 }
